@@ -1,4 +1,4 @@
-/*	$OpenBSD: grep.c,v 1.22 2003/07/16 19:08:21 millert Exp $	*/
+/*	$OpenBSD: grep.c,v 1.23 2003/09/07 19:40:54 millert Exp $	*/
 
 /*-
  * Copyright (c) 1999 James Howard and Dag-Erling Coïdan Smørgrav
@@ -105,11 +105,12 @@ usage(void)
 {
 	fprintf(stderr,
 #ifdef NOZ
-	    "usage: %s [-[AB] num] [-CEFGHILPRSUVabchilnoqsvwx]"
+	    "usage: %s [-AB num] [-CEFGHILPRSUVabchilnoqsvwx]\n"
 #else
-	    "usage: %s [-[AB] num] [-CEFGHILPRSUVZabchilnoqsvwx]"
+	    "usage: %s [-AB num] [-CEFGHILPRSUVZabchilnoqsvwx]\n"
 #endif
-	    " [-e pattern] [-f file] [file ...]\n", __progname);
+	    "\t[--context[=num]] [--binary-files=value]\n"
+	    "\t[-e pattern] [-f file] [pattern] [file ...]\n", __progname);
 	exit(2);
 }
 
