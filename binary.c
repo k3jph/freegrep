@@ -1,4 +1,4 @@
-/*	$OpenBSD: binary.c,v 1.7 2003/06/25 17:28:00 millert Exp $	*/
+/*	$OpenBSD: binary.c,v 1.8 2003/09/07 07:53:44 tedu Exp $	*/
 
 /*-
  * Copyright (c) 1999 James Howard and Dag-Erling Coïdan Smørgrav
@@ -66,7 +66,7 @@ gzbin_file(gzFile *f)
 		return 0;
 
 	for (i = 0; i < m; i++)
-		if (!isprint(buf[i]))
+		if (!isprint(buf[i]) && !isspace(buf[i]))
 			return 1;
 
 	gzrewind(f);
