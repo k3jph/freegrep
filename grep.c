@@ -23,7 +23,7 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- *	$Id: grep.c,v 1.1 2002/09/14 16:30:18 howardjp Exp $
+ *	$Id: grep.c,v 1.2 2003/02/04 02:24:38 howardjp Exp $
  */
 
 #include <sys/types.h>
@@ -141,7 +141,7 @@ add_pattern(char *pat, size_t len)
 	}
 	if (patterns == pattern_sz) {
 		pattern_sz *= 2;
-		pattern = grep_realloc(pattern, ++pattern_sz);
+		pattern = grep_realloc(pattern, ((++pattern_sz) * sizeof (*pattern)));
 	}
 	if (pat[len-1] == '\n')
 		--len;
