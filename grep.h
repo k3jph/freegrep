@@ -31,7 +31,7 @@
 #include <zlib.h>
 
 #define VER_MAJ 0
-#define VER_MIN 9
+#define VER_MIN 17
 
 typedef struct {
 	size_t		 len;
