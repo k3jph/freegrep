@@ -23,7 +23,7 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- *	$Id: queue.c,v 1.1 2004/01/02 14:58:43 cjep Exp $
+ *	$Id: queue.c,v 1.1.1.1 2004/01/02 14:58:43 cjep Exp $
  */
 
 /*

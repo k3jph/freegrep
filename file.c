@@ -23,7 +23,7 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- *	$Id: file.c,v 1.1 2004/01/02 14:58:45 cjep Exp $
+ *	$Id: file.c,v 1.1.1.1 2004/01/02 14:58:45 cjep Exp $
  */
 
 #include <sys/param.h>

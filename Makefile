@@ -1,4 +1,4 @@
-#	$Id: Makefile,v 1.1 2004/01/02 14:58:45 cjep Exp $
+#	$Id: Makefile,v 1.1.1.1 2004/01/02 14:58:45 cjep Exp $
 
 PROG=	grep
 SRCS=	binary.c file.c grep.c mmfile.c queue.c util.c
