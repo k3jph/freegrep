@@ -1,4 +1,4 @@
-/*	$OpenBSD: util.c,v 1.19 2003/12/06 20:14:40 otto Exp $	*/
+/*	$OpenBSD: util.c,v 1.20 2004/01/18 19:01:55 espie Exp $	*/
 
 /*-
  * Copyright (c) 1999 James Howard and Dag-Erling Coïdan Smørgrav
@@ -517,7 +517,8 @@ printline(str_t *line, int sep)
 	if (bflag) {
 		if (n)
 			putchar(sep);
-		printf("%lu", (unsigned long)line->off);
+		printf("%lld", (long long)line->off);
+		++n;
 	}
 	if (n)
 		putchar(sep);
