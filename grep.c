@@ -23,7 +23,7 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- *	$Id: grep.c,v 1.1 2002/09/14 16:30:18 howardjp Exp $
+ *	$Id: grep.c,v 1.3 2003/06/22 22:20:07 deraadt Exp $
  */
 
 #include <sys/types.h>
