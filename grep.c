@@ -1,4 +1,4 @@
-/*	$OpenBSD$	*/
+/*	$OpenBSD: grep.c,v 1.6 2003/06/22 22:38:50 deraadt Exp $	*/
 
 /*-
  * Copyright (c) 1999 James Howard and Dag-Erling Coïdan Smørgrav
@@ -97,7 +97,7 @@ usage(void)
 #else
 	    "usage: %s [-[AB] num] [-CEFGHLPRSVZabchilnoqsvwx]"
 #endif
-	    " [-e patttern] [-f file]\n", progname);
+	    " [-e pattern] [-f file] [file ...]\n", progname);
 	exit(2);
 }
 
