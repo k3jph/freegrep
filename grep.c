@@ -1,4 +1,4 @@
-/*	$OpenBSD: grep.c,v 1.10 2003/06/23 02:02:41 tedu Exp $	*/
+/*	$OpenBSD: grep.c,v 1.11 2003/06/23 03:23:40 tedu Exp $	*/
 
 /*-
  * Copyright (c) 1999 James Howard and Dag-Erling Coïdan Smørgrav
@@ -215,7 +215,8 @@ main(int argc, char *argv[])
 			if (tmp[0] == '-' && tmp[1] == c && !tmp[2])
 				Aflag = Bflag = strtol(++tmp, (char **)NULL, 10);
 			else
-				Aflag = Bflag = strtol(argv[optind] + 1, (char **)NULL, 10);
+				Aflag = Bflag = strtol(argv[optind] + 1,
+				    (char **)NULL, 10);
 			break;
 		case 'A':
 			Aflag = strtol(optarg, (char **)NULL, 10);
