@@ -23,7 +23,7 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- *	$Id: mmfile.c,v 1.1 2002/09/14 16:30:18 howardjp Exp $
+ *	$Id: mmfile.c,v 1.2 2003/02/04 03:04:50 howardjp Exp $
  */
 
 #include <sys/param.h>
@@ -85,14 +85,16 @@ char *
 mmfgetln(mmf_t *mmf, size_t *l)
 {
 	static char *p;
+	char *start = mmf->ptr;          // Remove speed bump
+	char *end = mmf->end;            // Remove speed bump
 
-	if (mmf->ptr >= mmf->end)
+	if (start >= end)
 		return NULL;
-	for (p = mmf->ptr; mmf->ptr < mmf->end; ++mmf->ptr)
-		if (*mmf->ptr == '\n')
+	for (p = start; start < end; ++start)
+		if (*start == '\n')
 			break;
-	*l = mmf->ptr - p;
-	++mmf->ptr;
+	*l = start - p;
+	mmf->ptr = start + 1;
 	return p;
 }
 
