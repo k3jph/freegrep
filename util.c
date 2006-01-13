@@ -1,4 +1,4 @@
-/*	$NetBSD: util.c,v 1.1.1.2 2004/01/02 15:00:34 cjep Exp $	*/
+/*	$NetBSD: util.c,v 1.2 2004/10/30 17:37:10 dsl Exp $	*/
 
 /*-
  * Copyright (c) 1999 James Howard and Dag-Erling Coïdan Smørgrav
@@ -29,7 +29,7 @@
 
 #include <sys/cdefs.h>
 #ifndef lint
-__RCSID("$NetBSD: util.c,v 1.1.1.2 2004/01/02 15:00:34 cjep Exp $");
+__RCSID("$NetBSD: util.c,v 1.2 2004/10/30 17:37:10 dsl Exp $");
 #endif /* not lint */
 
 #include <sys/types.h>
@@ -86,7 +86,7 @@ grep_tree(char **argv)
 		case FTS_D:
 			break;
 		case FTS_DC:
-			warnx("warning: %s: recursive directory loop\n",
+			warnx("warning: %s: recursive directory loop",
 				p->fts_path);
 			break;
 		default:
