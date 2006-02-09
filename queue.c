@@ -1,4 +1,4 @@
-/*	$OpenBSD: queue.c,v 1.3 2003/06/22 22:38:50 deraadt Exp $	*/
+/*	$OpenBSD: queue.c,v 1.4 2003/06/25 05:31:11 deraadt Exp $	*/
 
 /*-
  * Copyright (c) 1999 James Howard and Dag-Erling Coïdan Smørgrav
@@ -119,10 +119,4 @@ clearqueue(void)
 
 	while ((item = dequeue()) != NULL)
 		free_item(item);
-}
-
-int
-countqueue(void)
-{
-	return count;
 }
