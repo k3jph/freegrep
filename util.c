@@ -1,4 +1,4 @@
-/*	$OpenBSD: util.c,v 1.30 2005/04/03 19:12:40 otto Exp $	*/
+/*	$OpenBSD: util.c,v 1.31 2006/02/09 09:54:47 otto Exp $	*/
 
 /*-
  * Copyright (c) 1999 James Howard and Dag-Erling Coïdan Smørgrav
@@ -479,8 +479,9 @@ grep_search(fastgrep_t *fg, unsigned char *data, size_t dataLen, regmatch_t *pma
 			if (grep_cmp(fg->pattern, data + j, fg->patternLen) == -1) {
 				pmatch->rm_so = j;
 				pmatch->rm_eo = j + fg->patternLen;
-				if (!fg->wmatch || wmatch(data, dataLen,
-				    pmatch->rm_so, pmatch->rm_eo)) {
+				if (fg->patternLen == 0 || !fg->wmatch ||
+				    wmatch(data, dataLen, pmatch->rm_so,
+				    pmatch->rm_eo)) {
 					rtrnVal = 0;
 					break;
 				}
