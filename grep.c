@@ -1,4 +1,4 @@
-/*	$OpenBSD: grep.c,v 1.37 2006/11/02 18:00:03 ray Exp $	*/
+/*	$OpenBSD: grep.c,v 1.38 2007/02/13 21:48:20 kili Exp $	*/
 
 /*-
  * Copyright (c) 1999 James Howard and Dag-Erling Coïdan Smørgrav
@@ -450,8 +450,8 @@ main(int argc, char *argv[])
 
 	if (Eflag)
 		cflags |= REG_EXTENDED;
-	fg_pattern = grep_malloc(patterns * sizeof(*fg_pattern));
-	r_pattern = grep_malloc(patterns * sizeof(*r_pattern));
+	fg_pattern = grep_calloc(patterns, sizeof(*fg_pattern));
+	r_pattern = grep_calloc(patterns, sizeof(*r_pattern));
 	for (i = 0; i < patterns; ++i) {
 		/* Check if cheating is allowed (always is for fgrep). */
 		if (Fflag) {
