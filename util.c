@@ -1,4 +1,4 @@
-/*	$OpenBSD: util.c,v 1.34 2006/12/26 20:59:23 otto Exp $	*/
+/*	$OpenBSD: util.c,v 1.35 2007/09/02 15:19:32 deraadt Exp $	*/
 
 /*-
  * Copyright (c) 1999 James Howard and Dag-Erling Coïdan Smørgrav
@@ -327,7 +327,6 @@ fastcomp(fastgrep_t *fg, const char *pattern)
 		/* Can still cheat? */
 		if ((isalnum(fg->pattern[i])) || isspace(fg->pattern[i]) ||
 		    (fg->pattern[i] == '_') || (fg->pattern[i] == ',') ||
-		    (fg->pattern[i] == '^') || (fg->pattern[i] == '$') ||
 		    (fg->pattern[i] == '=') || (fg->pattern[i] == '-') ||
 		    (fg->pattern[i] == ':') || (fg->pattern[i] == '/')) {
 			/* As long as it is good, upper case it for later. */
