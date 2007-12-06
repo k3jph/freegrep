@@ -1,4 +1,4 @@
-/*	$NetBSD: file.c,v 1.1.1.2 2004/01/02 15:00:27 cjep Exp $	*/
+/*	$NetBSD: file.c,v 1.2 2006/05/15 21:12:21 rillig Exp $	*/
 
 /*-
  * Copyright (c) 1999 James Howard and Dag-Erling Coïdan Smørgrav
@@ -29,15 +29,15 @@
 
 #include <sys/cdefs.h>
 #ifndef lint
-__RCSID("$NetBSD: file.c,v 1.1.1.2 2004/01/02 15:00:27 cjep Exp $");
+__RCSID("$NetBSD: file.c,v 1.2 2006/05/15 21:12:21 rillig Exp $");
 #endif /* not lint */
 
 #include <sys/param.h>
 
+#include <zlib.h>
 #include <err.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <zlib.h>
 
 #include "grep.h"
 
