@@ -1,4 +1,4 @@
-/*	$OpenBSD: file.c,v 1.8 2006/02/07 22:05:54 otto Exp $	*/
+/*	$OpenBSD: file.c,v 1.9 2006/02/09 09:54:46 otto Exp $	*/
 
 /*-
  * Copyright (c) 1999 James Howard and Dag-Erling Coïdan Smørgrav
@@ -36,8 +36,10 @@
 #include "grep.h"
 
 static char	 fname[MAXPATHLEN];
+#ifndef NOZ
 static char	*lnbuf;
 static size_t	 lnbuflen;
+#endif
 
 #define FILE_STDIO	0
 #define FILE_MMAP	1
