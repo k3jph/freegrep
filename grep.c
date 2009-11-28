@@ -27,7 +27,6 @@
  */
 
 #include <sys/types.h>
-#include <sys/limits.h>
 #include <sys/stat.h>
 #include <sys/queue.h>
 

@@ -27,8 +27,8 @@
  */
 
 #include <sys/types.h>
-#include <sys/limits.h>
 
+#include <limits.h>
 #include <regex.h>
 #include <stdio.h>
 #include <zlib.h>
