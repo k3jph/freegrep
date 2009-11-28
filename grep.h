@@ -1,3 +1,5 @@
+/*	$OpenBSD: grep.h,v 1.13 2006/02/09 09:54:47 otto Exp $	*/
+
 /*-
  * Copyright (c) 1999 James Howard and Dag-Erling Coïdan Smørgrav
  * All rights reserved.
@@ -25,6 +27,7 @@
  */
 
 #include <sys/types.h>
+#include <sys/limits.h>
 
 #include <regex.h>
 #include <stdio.h>
@@ -33,24 +36,42 @@
 #define VER_MAJ 0
 #define VER_MIN 17
 
+#define BIN_FILE_BIN	0
+#define BIN_FILE_SKIP	1
+#define BIN_FILE_TEXT	2
+
 typedef struct {
 	size_t		 len;
 	int		 line_no;
-	int		 off;
+	off_t		 off;
 	char		*file;
 	char		*dat;
 } str_t;
+
+typedef struct {
+	unsigned char	*pattern;
+	int		 patternLen;
+	int		 qsBc[UCHAR_MAX + 1];
+	/* flags */
+	int		 bol;
+	int		 eol;
+	int		 wmatch;
+	int		 reversedSearch;
+} fastgrep_t;
 
 /* Flags passed to regcomp() and regexec() */
 extern int	 cflags, eflags;
 
 /* Command line flags */
-extern int	 Aflag, Bflag, Hflag, Lflag, Pflag, Sflag, Rflag, Zflag,
-		 aflag, bflag, cflag, hflag, lflag, nflag, qflag, sflag,
+extern int	 Aflag, Bflag, Eflag, Fflag, Gflag, Hflag, Lflag, Pflag,
+		 Sflag, Rflag, Zflag,
+		 bflag, cflag, hflag, iflag, lflag, nflag, qflag, sflag,
 		 vflag, wflag, xflag;
+extern int	 binbehave;
 
-extern int	 first, lead, matchall, patterns, tail;
+extern int	 first, matchall, patterns, tail;
 extern char    **pattern;
+extern fastgrep_t *fg_pattern;
 extern regex_t	*r_pattern;
 
 /* For regex errors  */
@@ -61,14 +82,17 @@ extern char	 re_error[RE_ERROR_BUF + 1];	/* Seems big enough */
 int		 procfile(char *fn);
 int		 grep_tree(char **argv);
 void		*grep_malloc(size_t size);
+void		*grep_calloc(size_t nmemb, size_t size);
 void		*grep_realloc(void *ptr, size_t size);
 void		 printline(str_t *line, int sep);
+int		 fastcomp(fastgrep_t *, const char *);
+void		 fgrepcomp(fastgrep_t *, const char *);
 
 /* queue.c */
-void		 initqueue();
+void		 initqueue(void);
 void		 enqueue(str_t *x);
-void		 printqueue();
-void		 clearqueue();
+void		 printqueue(void);
+void		 clearqueue(void);
 
 /* mmfile.c */
 typedef struct mmfile {
@@ -80,8 +104,6 @@ typedef struct mmfile {
 mmf_t		*mmopen(char *fn, char *mode);
 void		 mmclose(mmf_t *mmf);
 char		*mmfgetln(mmf_t *mmf, size_t *l);
-long		 mmtell(mmf_t *mmf);
-void		 mmrewind(mmf_t *mmf);
 
 /* file.c */
 struct file;
@@ -90,7 +112,6 @@ typedef struct file file_t;
 file_t		*grep_fdopen(int fd, char *mode);
 file_t		*grep_open(char *path, char *mode);
 int		 grep_bin_file(file_t *f);
-long		 grep_tell(file_t *f);
 char		*grep_fgetln(file_t *f, size_t *l);
 void		 grep_close(file_t *f);
 

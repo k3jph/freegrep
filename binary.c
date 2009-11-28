@@ -1,3 +1,5 @@
+/*	$OpenBSD: binary.c,v 1.14 2005/02/07 08:47:18 otto Exp $	*/
+
 /*-
  * Copyright (c) 1999 James Howard and Dag-Erling Coïdan Smørgrav
  * All rights reserved.
@@ -22,67 +24,74 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	$Id: binary.c,v 1.1 2002/09/14 16:30:18 howardjp Exp $
  */
 
 #include <ctype.h>
+#include <err.h>
 #include <stdio.h>
 #include <zlib.h>
 
 #include "grep.h"
 
-#define BUFFER_SIZE 32
+#define	isbinary(ch)	(!isprint((ch)) && !isspace((ch)) && (ch) != '\b')
 
 int
 bin_file(FILE *f)
 {
-	char		buf[BUFFER_SIZE];
-	int		i, m;
+	char		buf[BUFSIZ];
+	size_t		i, m;
+	int		ret = 0;
 
-	if (fseek(f, SEEK_SET, 0) == -1)
+	if (fseek(f, 0L, SEEK_SET) == -1)
 		return 0;
 
-	if ((m = (int)fread(buf, 1, BUFFER_SIZE, f)) == 0)
+	if ((m = fread(buf, 1, BUFSIZ, f)) == 0)
 		return 0;
 
 	for (i = 0; i < m; i++)
-		if (!isprint(buf[i]) && !isspace(buf[i]))
-			return 1;
+		if (isbinary(buf[i])) {
+			ret = 1;
+			break;
+		}
 
 	rewind(f);
-	return 0;
+	return ret;
 }
 
+#ifndef NOZ
 int
 gzbin_file(gzFile *f)
 {
-	char		buf[BUFFER_SIZE];
+	char		buf[BUFSIZ];
 	int		i, m;
+	int		ret = 0;
 
-	if (gzseek(f, SEEK_SET, 0) == -1)
+	if (gzseek(f, (z_off_t)0, SEEK_SET) == -1)
 		return 0;
 
-	if ((m = (int)gzread(f, buf, BUFFER_SIZE)) == 0)
+	if ((m = gzread(f, buf, BUFSIZ)) <= 0)
 		return 0;
 
 	for (i = 0; i < m; i++)
-		if (!isprint(buf[i]))
-			return 1;
+		if (isbinary(buf[i])) {
+			ret = 1;
+			break;
+		}
 
-	gzrewind(f);
-	return 0;
+	if (gzrewind(f) != 0)
+		err(1, "gzbin_file");
+	return ret;
 }
+#endif
 
 int
 mmbin_file(mmf_t *f)
 {
 	int i;
-	
+
 	/* XXX knows too much about mmf internals */
-	for (i = 0; i < BUFFER_SIZE && i < f->len; i++)
-		if (!isprint(f->base[i]))
+	for (i = 0; i < BUFSIZ && i < f->len; i++)
+		if (isbinary(f->base[i]))
 			return 1;
-	mmrewind(f);
 	return 0;
 }

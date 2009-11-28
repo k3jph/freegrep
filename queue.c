@@ -1,3 +1,5 @@
+/*	$OpenBSD: queue.c,v 1.4 2003/06/25 05:31:11 deraadt Exp $	*/
+
 /*-
  * Copyright (c) 1999 James Howard and Dag-Erling Coïdan Smørgrav
  * All rights reserved.
@@ -22,8 +24,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	$Id: queue.c,v 1.1 2002/09/14 16:30:17 howardjp Exp $
  */
 
 /*
@@ -63,7 +63,7 @@ free_item(queue_t *item)
 void
 enqueue(str_t *x)
 {
-	queue_t	       *item;
+	queue_t	*item;
 
 	item = grep_malloc(sizeof *item + x->len);
 	item->data.len = x->len;
@@ -88,7 +88,7 @@ enqueue(str_t *x)
 static queue_t *
 dequeue(void)
 {
-	queue_t	       *item;
+	queue_t	*item;
 
 	if (q_head == NULL)
 		return NULL;
@@ -119,10 +119,4 @@ clearqueue(void)
 
 	while ((item = dequeue()) != NULL)
 		free_item(item);
-}
-
-int
-countqueue(void)
-{
-	return count;
 }
