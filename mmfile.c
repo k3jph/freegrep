@@ -63,7 +63,7 @@ mmopen(char *fn, char *mode)
 		goto ouch2;
 	mmf->ptr = mmf->base;
 	mmf->end = mmf->base + mmf->len;
-#ifdef MADV_SEQUENTIAL
+#ifndef __minix
 	madvise(mmf->base, mmf->len, MADV_SEQUENTIAL);
 #endif
 	return mmf;
