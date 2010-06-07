@@ -38,7 +38,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <zlib.h>
 
 #include "grep.h"
 
@@ -580,7 +579,11 @@ printline(str_t *line, int sep)
 	if (bflag) {
 		if (n)
 			putchar(sep);
+#ifndef __minix
 		printf("%lld", (long long)line->off);
+#else
+		printf("%ld", (long)line->off);
+#endif
 		++n;
 	}
 	if (n)

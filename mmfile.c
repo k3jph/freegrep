@@ -63,7 +63,9 @@ mmopen(char *fn, char *mode)
 		goto ouch2;
 	mmf->ptr = mmf->base;
 	mmf->end = mmf->base + mmf->len;
+#ifdef MADV_SEQUENTIAL
 	madvise(mmf->base, mmf->len, MADV_SEQUENTIAL);
+#endif
 	return mmf;
 
 ouch2:
@@ -85,8 +87,8 @@ char *
 mmfgetln(mmf_t *mmf, size_t *l)
 {
 	static char *p;
-	char *start = mmf->ptr;          // Remove speed bump
-	char *end = mmf->end;            // Remove speed bump
+	char *start = mmf->ptr;          /* Remove speed bump */
+	char *end = mmf->end;            /* Remove speed bump */
 
 	if (start >= end)
 		return NULL;

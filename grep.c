@@ -237,9 +237,12 @@ main(int argc, char *argv[])
 	struct patfile *patfile, *pf_next;
 	long l;
 	char *ep;
+	const char *progname;
 
 	SLIST_INIT(&patfilelh);
-	switch (__progname[0]) {
+	setprogname(argv[0]);
+	progname=getprogname();
+	switch (progname[0]) {
 	case 'e':
 		Eflag++;
 		break;
@@ -252,7 +255,7 @@ main(int argc, char *argv[])
 #ifndef NOZ
 	case 'z':
 		Zflag++;
-		switch(__progname[1]) {
+		switch(progname[1]) {
 		case 'e':
 			Eflag++;
 			break;
@@ -468,8 +471,10 @@ main(int argc, char *argv[])
 		}
 	}
 
+#ifndef __minix
 	if (lbflag)
 		setlinebuf(stdout);
+#endif
 
 	if ((argc == 0 || argc == 1) && !oflag)
 		hflag = 1;

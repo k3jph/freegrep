@@ -29,7 +29,6 @@
 #include <ctype.h>
 #include <err.h>
 #include <stdio.h>
-#include <zlib.h>
 
 #include "grep.h"
 
