@@ -15,18 +15,12 @@ MLINKS= grep.1 egrep.1 \
 	grep.1 zegrep.1 \
 	grep.1 zfgrep.1
 
-.if ${OPSYS} == "Minix"
-CPPFLAGS+= -DNOZ -D_POSIX_SOURCE -D_MINIX
-.endif
-
 CFLAGS+= -Wall
 
-.if ${OPSYS} != "Minix"
+.if ${OPSYS} == "Minix"
+CPPFLAGS+= -DNOZ -D_POSIX_SOURCE -D_MINIX
 LDADD=	-lz
 DPADD=	${LIBZ}
-.endif
-
-.if ${OPSYS} == "Minix"
 .include <minix.prog.mk>
 .elif
 .include <bsd.prog.mk>
