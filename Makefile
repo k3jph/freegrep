@@ -21,8 +21,10 @@ CPPFLAGS+= -DNOZ -D_POSIX_SOURCE -D_MINIX
 
 CFLAGS+= -Wall
 
+.if ${OPSYS} != "Minix"
 LDADD=	-lz
 DPADD=	${LIBZ}
+.endif
 
 .if ${OPSYS} == "Minix"
 .include <minix.prog.mk>
