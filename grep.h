@@ -36,8 +36,8 @@
 #include <zlib.h>
 #endif
 
-#define VER_MAJ 0
-#define VER_MIN 17
+#define VER_MAJ 1
+#define VER_MIN 1
 
 #define BIN_FILE_BIN	0
 #define BIN_FILE_SKIP	1
