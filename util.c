@@ -74,10 +74,11 @@ grep_tree(char **argv)
 	while ((p = fts_read(fts)) != NULL) {
 		switch (p->fts_info) {
 		case FTS_DNR:
-			break;
+			/* FALL THROUGH */
 		case FTS_ERR:
 			errx(2, "%s: %s", p->fts_path, strerror(p->fts_errno));
 			break;
+		case FTS_D:
 		case FTS_DP:
 			break;
 		default:
