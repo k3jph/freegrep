@@ -37,7 +37,7 @@
 #endif
 
 #define VER_MAJ 1
-#define VER_MIN 1
+#define VER_MIN 2
 
 #define BIN_FILE_BIN	0
 #define BIN_FILE_SKIP	1
