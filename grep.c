@@ -1,4 +1,4 @@
-/*	$OpenBSD: grep.c,v 1.38 2007/02/13 21:48:20 kili Exp $	*/
+/*	$OpenBSD: grep.c,v 1.62 2019/10/07 20:04:00 tedu Exp $	*/
 
 /*-
  * Copyright (c) 1999 James Howard and Dag-Erling Coïdan Smørgrav
@@ -60,28 +60,27 @@ int	 Aflag;		/* -A x: print x lines trailing each match */
 int	 Bflag;		/* -B x: print x lines leading each match */
 int	 Eflag;		/* -E: interpret pattern as extended regexp */
 int	 Fflag;		/* -F: interpret pattern as list of fixed strings */
-int	 Gflag;		/* -G: interpret pattern as basic regexp */
-int	 Hflag;		/* -H: if -R, follow explicitly listed symlinks */
+int	 Hflag;		/* -H: always print filename header */
 int	 Lflag;		/* -L: only show names of files with no matches */
-int	 Pflag;		/* -P: if -R, no symlinks are followed */
 int	 Rflag;		/* -R: recursively search directory trees */
-int	 Sflag;		/* -S: if -R, follow all symlinks */
-#ifndef NOZ
 int	 Zflag;		/* -Z: decompress input before processing */
-#endif
 int	 bflag;		/* -b: show block numbers for each match */
 int	 cflag;		/* -c: only show a count of matching lines */
 int	 hflag;		/* -h: don't print filename headers */
 int	 iflag;		/* -i: ignore case */
 int	 lflag;		/* -l: only show names of files with matches */
+int	 mflag;		/* -m x: stop reading the files after x matches */
+long long mcount;	/* count for -m */
+long long mlimit;	/* requested value for -m */
 int	 nflag;		/* -n: show line numbers in front of matching lines */
-int	 oflag;		/* -o: always print file name */
+int	 oflag;		/* -o: print each match */
 int	 qflag;		/* -q: quiet mode (don't output anything) */
 int	 sflag;		/* -s: silent mode (ignore errors) */
 int	 vflag;		/* -v: only show non-matching lines */
 int	 wflag;		/* -w: pattern must start and end on word boundaries */
 int	 xflag;		/* -x: pattern must match entire line */
 int	 lbflag;	/* --line-buffered */
+const char *labelname;	/* --label=name */
 
 int binbehave = BIN_FILE_BIN;
 
@@ -89,12 +88,14 @@ enum {
 	BIN_OPT = CHAR_MAX + 1,
 	HELP_OPT,
 	MMAP_OPT,
-	LINEBUF_OPT
+	LINEBUF_OPT,
+	LABEL_OPT,
 };
 
 /* Housekeeping */
 int	 first;		/* flag whether or not this is our first match */
 int	 tail;		/* lines left to print */
+int	 file_err;	/* file reading error */
 
 struct patfile {
 	const char		*pf_file;
@@ -109,26 +110,29 @@ usage(void)
 {
 	fprintf(stderr,
 #ifdef NOZ
-	    "usage: %s [-abcEFGHhIiLlnoPqRSsUVvwx] [-A num] [-B num] [-C[num]]\n"
+	    "usage: %s [-abcEFGHhIiLlnoqRsUVvwx] [-A num] [-B num] [-C[num]]"
 #else
-	    "usage: %s [-abcEFGHhIiLlnoPqRSsUVvwxZ] [-A num] [-B num] [-C[num]]\n"
+	    "usage: %s [-abcEFGHhIiLlnoqRsUVvwxZ] [-A num] [-B num] [-C[num]]"
 #endif
-	    "\t[-e pattern] [-f file] [--binary-files=value] [--context[=num]]\n"
-	    "\t[--line-buffered] [pattern] [file ...]\n", __progname);
+	    " [-e pattern]\n"
+	    "\t[-f file] [-m num] [--binary-files=value] [--context[=num]]\n"
+	    "\t[--label=name] [--line-buffered] [pattern] [file ...]\n",
+	    __progname);
 	exit(2);
 }
 
 #ifdef NOZ
-static char *optstr = "0123456789A:B:CEFGHILPSRUVabce:f:hilnoqrsuvwxy";
+static const char optstr[] = "0123456789A:B:CEFGHILRUVabce:f:hilm:noqrsuvwxy";
 #else
-static char *optstr = "0123456789A:B:CEFGHILPSRUVZabce:f:hilnoqrsuvwxy";
+static const char optstr[] = "0123456789A:B:CEFGHILRUVZabce:f:hilm:noqrsuvwxy";
 #endif
 
-struct option long_options[] =
+static const struct option long_options[] =
 {
 	{"binary-files",	required_argument,	NULL, BIN_OPT},
 	{"help",		no_argument,		NULL, HELP_OPT},
 	{"mmap",		no_argument,		NULL, MMAP_OPT},
+	{"label",		required_argument,	NULL, LABEL_OPT},
 	{"line-buffered",	no_argument,		NULL, LINEBUF_OPT},
 	{"after-context",	required_argument,	NULL, 'A'},
 	{"before-context",	required_argument,	NULL, 'B'},
@@ -137,6 +141,7 @@ struct option long_options[] =
 	{"extended-regexp",	no_argument,		NULL, 'E'},
 	{"fixed-strings",	no_argument,		NULL, 'F'},
 	{"basic-regexp",	no_argument,		NULL, 'G'},
+	{"with-filename",	no_argument,		NULL, 'H'},
 	{"binary",		no_argument,		NULL, 'U'},
 	{"version",		no_argument,		NULL, 'V'},
 	{"text",		no_argument,		NULL, 'a'},
@@ -148,6 +153,7 @@ struct option long_options[] =
 	{"ignore-case",		no_argument,		NULL, 'i'},
 	{"files-without-match",	no_argument,		NULL, 'L'},
 	{"files-with-matches",	no_argument,		NULL, 'l'},
+	{"max-count",		required_argument,	NULL, 'm'},
 	{"line-number",		no_argument,		NULL, 'n'},
 	{"quiet",		no_argument,		NULL, 'q'},
 	{"silent",		no_argument,		NULL, 'q'},
@@ -173,7 +179,7 @@ add_pattern(char *pat, size_t len)
 	}
 	if (patterns == pattern_sz) {
 		pattern_sz *= 2;
-		pattern = grep_realloc(pattern, ++pattern_sz * sizeof(*pattern));
+		pattern = grep_reallocarray(pattern, ++pattern_sz, sizeof(*pattern));
 	}
 	if (len > 0 && pat[len - 1] == '\n')
 		--len;
@@ -219,53 +225,50 @@ read_patterns(const char *fn)
 {
 	FILE *f;
 	char *line;
-	size_t len;
+	ssize_t len;
+	size_t linesize;
 
 	if ((f = fopen(fn, "r")) == NULL)
 		err(2, "%s", fn);
-	while ((line = fgetln(f, &len)) != NULL)
+	line = NULL;
+	linesize = 0;
+	while ((len = getline(&line, &linesize, f)) != -1)
 		add_pattern(line, *line == '\n' ? 0 : len);
 	if (ferror(f))
 		err(2, "%s", fn);
 	fclose(f);
+	free(line);
 }
 
 int
 main(int argc, char *argv[])
 {
-	int c, lastc, prevoptind, newarg, i, needpattern;
+	int c, lastc, prevoptind, newarg, i, needpattern, exprs, expr_sz;
 	struct patfile *patfile, *pf_next;
 	long l;
-	char *ep;
+	char **expr;
+	const char *errstr;
+
+	if (pledge("stdio rpath", NULL) == -1)
+		err(2, "pledge");
 
 	SLIST_INIT(&patfilelh);
-
-#ifdef __minix
-	setprogname(argv[0]);
-#endif
-
 	switch (__progname[0]) {
 	case 'e':
-		Eflag++;
+		Eflag = 1;
 		break;
 	case 'f':
-		Fflag++;
-		break;
-	case 'g':
-		Gflag++;
+		Fflag = 1;
 		break;
 #ifndef NOZ
 	case 'z':
-		Zflag++;
+		Zflag = 1;
 		switch(__progname[1]) {
 		case 'e':
-			Eflag++;
+			Eflag = 1;
 			break;
 		case 'f':
-			Fflag++;
-			break;
-		case 'g':
-			Gflag++;
+			Fflag = 1;
 			break;
 		}
 		break;
@@ -276,6 +279,8 @@ main(int argc, char *argv[])
 	newarg = 1;
 	prevoptind = 1;
 	needpattern = 1;
+	expr_sz = exprs = 0;
+	expr = NULL;
 	while ((c = getopt_long(argc, argv, optstr,
 				long_options, NULL)) != -1) {
 		switch (c) {
@@ -289,10 +294,9 @@ main(int argc, char *argv[])
 			break;
 		case 'A':
 		case 'B':
-			l = strtol(optarg, &ep, 10);
-			if (ep == optarg || *ep != '\0' ||
-			    l <= 0 || l >= INT_MAX)
-				errx(2, "context out of range");
+			l = strtonum(optarg, 1, INT_MAX, &errstr);
+			if (errstr != NULL)
+				errx(2, "context %s", errstr);
 			if (c == 'A')
 				Aflag = (int)l;
 			else
@@ -302,27 +306,25 @@ main(int argc, char *argv[])
 			if (optarg == NULL)
 				Aflag = Bflag = 2;
 			else {
-				l = strtol(optarg, &ep, 10);
-				if (ep == optarg || *ep != '\0' ||
-				    l <= 0 || l >= INT_MAX)
-					errx(2, "context out of range");
+				l = strtonum(optarg, 1, INT_MAX, &errstr);
+				if (errstr != NULL)
+					errx(2, "context %s", errstr);
 				Aflag = Bflag = (int)l;
 			}
 			break;
 		case 'E':
-			Fflag = Gflag = 0;
-			Eflag++;
+			Fflag = 0;
+			Eflag = 1;
 			break;
 		case 'F':
-			Eflag = Gflag = 0;
-			Fflag++;
+			Eflag = 0;
+			Fflag = 1;
 			break;
 		case 'G':
 			Eflag = Fflag = 0;
-			Gflag++;
 			break;
 		case 'H':
-			Hflag++;
+			Hflag = 1;
 			break;
 		case 'I':
 			binbehave = BIN_FILE_SKIP;
@@ -331,16 +333,9 @@ main(int argc, char *argv[])
 			lflag = 0;
 			Lflag = qflag = 1;
 			break;
-		case 'P':
-			Pflag++;
-			break;
-		case 'S':
-			Sflag++;
-			break;
 		case 'R':
 		case 'r':
-			Rflag++;
-			oflag++;
+			Rflag = 1;
 			break;
 		case 'U':
 			binbehave = BIN_FILE_BIN;
@@ -351,7 +346,7 @@ main(int argc, char *argv[])
 			break;
 #ifndef NOZ
 		case 'Z':
-			Zflag++;
+			Zflag = 1;
 			break;
 #endif
 		case 'a':
@@ -364,8 +359,15 @@ main(int argc, char *argv[])
 			cflag = 1;
 			break;
 		case 'e':
-			add_patterns(optarg);
+			/* defer adding of expressions until all arguments are parsed */
+			if (exprs == expr_sz) {
+				expr_sz *= 2;
+				expr = grep_reallocarray(expr, ++expr_sz,
+				    sizeof(*expr));
+			}
 			needpattern = 0;
+			expr[exprs] = optarg;
+			++exprs;
 			break;
 		case 'f':
 			patfile = grep_malloc(sizeof(*patfile));
@@ -374,7 +376,6 @@ main(int argc, char *argv[])
 			needpattern = 0;
 			break;
 		case 'h':
-			oflag = 0;
 			hflag = 1;
 			break;
 		case 'i':
@@ -386,11 +387,18 @@ main(int argc, char *argv[])
 			Lflag = 0;
 			lflag = qflag = 1;
 			break;
+		case 'm':
+			mflag = 1;
+			mlimit = mcount = strtonum(optarg, 0, LLONG_MAX,
+			   &errstr);
+			if (errstr != NULL)
+				errx(2, "invalid max-count %s: %s",
+				    optarg, errstr);
+			break;
 		case 'n':
 			nflag = 1;
 			break;
 		case 'o':
-			hflag = 0;
 			oflag = 1;
 			break;
 		case 'q':
@@ -422,6 +430,9 @@ main(int argc, char *argv[])
 		case MMAP_OPT:
 			/* default, compatibility */
 			break;
+		case LABEL_OPT:
+			labelname = optarg;
+			break;
 		case LINEBUF_OPT:
 			lbflag = 1;
 			break;
@@ -435,6 +446,11 @@ main(int argc, char *argv[])
 	}
 	argc -= optind;
 	argv += optind;
+
+	for (i = 0; i < exprs; i++)
+		add_patterns(expr[i]);
+	free(expr);
+	expr = NULL;
 
 	for (patfile = SLIST_FIRST(&patfilelh); patfile != NULL;
 	    patfile = pf_next) {
@@ -451,16 +467,33 @@ main(int argc, char *argv[])
 		--argc;
 		++argv;
 	}
+	if (argc == 1 && strcmp(*argv, "-") == 0) {
+		/* stdin */
+		--argc;
+		++argv;
+	}
 
+	if (Rflag && argc == 0)
+		warnx("warning: recursive search of stdin");
 	if (Eflag)
 		cflags |= REG_EXTENDED;
+	if (Fflag)
+		cflags |= REG_NOSPEC;
+#ifdef SMALL
+	/* Sorry, this won't work */
+	if (Fflag && wflag)
+		errx(1, "Can't use small fgrep with -w");
+#endif
 	fg_pattern = grep_calloc(patterns, sizeof(*fg_pattern));
 	r_pattern = grep_calloc(patterns, sizeof(*r_pattern));
 	for (i = 0; i < patterns; ++i) {
 		/* Check if cheating is allowed (always is for fgrep). */
+#ifndef SMALL
 		if (Fflag) {
 			fgrepcomp(&fg_pattern[i], pattern[i]);
-		} else {
+		} else
+#endif
+		{
 			if (fastcomp(&fg_pattern[i], pattern[i])) {
 				/* Fall back to full regex library */
 				c = regcomp(&r_pattern[i], pattern[i], cflags);
@@ -473,12 +506,10 @@ main(int argc, char *argv[])
 		}
 	}
 
-#ifndef __minix
 	if (lbflag)
-		setlinebuf(stdout);
-#endif
+		setvbuf(stdout, NULL, _IOLBF, 0);
 
-	if ((argc == 0 || argc == 1) && !oflag)
+	if ((argc == 0 || argc == 1) && !Rflag && !Hflag)
 		hflag = 1;
 
 	if (argc == 0)
@@ -490,5 +521,5 @@ main(int argc, char *argv[])
 		for (c = 0; argc--; ++argv)
 			c += procfile(*argv);
 
-	exit(!c);
+	exit(c ? (file_err ? (qflag ? 0 : 2) : 0) : (file_err ? 2 : 1));
 }

@@ -1,4 +1,4 @@
-/*	$OpenBSD: mmfile.c,v 1.11 2006/09/19 05:52:23 otto Exp $	*/
+/*	$OpenBSD: mmfile.c,v 1.19 2019/01/27 14:43:09 deraadt Exp $	*/
 
 /*-
  * Copyright (c) 1999 James Howard and Dag-Erling Coïdan Smørgrav
@@ -26,7 +26,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/param.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 
@@ -37,40 +36,29 @@
 
 #include "grep.h"
 
+#ifndef SMALL
+
 #define MAX_MAP_LEN 1048576
 
 mmf_t *
-mmopen(char *fn, char *mode)
+mmopen(int fd, struct stat *st)
 {
 	mmf_t *mmf;
-	struct stat st;
-
-	/* XXX ignore mode for now */
-	mode = mode;
 
 	mmf = grep_malloc(sizeof *mmf);
-	if ((mmf->fd = open(fn, O_RDONLY)) == -1)
-		goto ouch1;
-	if (fstat(mmf->fd, &st) == -1)
-		goto ouch2;
-	if (st.st_size > SIZE_T_MAX) /* too big to mmap */
-		goto ouch2;
-	if (!S_ISREG(st.st_mode)) /* only mmap regular files */
-		goto ouch2;
-	mmf->len = (size_t)st.st_size;
+	if (st->st_size > SIZE_MAX) /* too big to mmap */
+		goto ouch;
+	mmf->len = (size_t)st->st_size;
+	mmf->fd = fd;
 	mmf->base = mmap(NULL, mmf->len, PROT_READ, MAP_PRIVATE, mmf->fd, (off_t)0);
 	if (mmf->base == MAP_FAILED)
-		goto ouch2;
+		goto ouch;
 	mmf->ptr = mmf->base;
 	mmf->end = mmf->base + mmf->len;
-#ifndef __minix
 	madvise(mmf->base, mmf->len, MADV_SEQUENTIAL);
-#endif
 	return mmf;
 
-ouch2:
-	close(mmf->fd);
-ouch1:
+ouch:
 	free(mmf);
 	return NULL;
 }
@@ -87,16 +75,16 @@ char *
 mmfgetln(mmf_t *mmf, size_t *l)
 {
 	static char *p;
-	char *start = mmf->ptr;          /* Remove speed bump */
-	char *end = mmf->end;            /* Remove speed bump */
 
-	if (start >= end)
+	if (mmf->ptr >= mmf->end)
 		return NULL;
-    	for (p = mmf->ptr; mmf->ptr < mmf->end; ++mmf->ptr)
-        	if (*mmf->ptr == '\n')
-            		break;
+	for (p = mmf->ptr; mmf->ptr < mmf->end; ++mmf->ptr)
+		if (*mmf->ptr == '\n')
+		    break;
 
 	*l = mmf->ptr - p;
 	++mmf->ptr;
 	return p;
 }
+
+#endif

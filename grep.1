@@ -1,4 +1,4 @@
-.\"	$OpenBSD: grep.1,v 1.35 2007/05/31 19:20:10 jmc Exp $
+.\"	$OpenBSD: grep.1,v 1.49 2019/10/07 20:51:34 tedu Exp $
 .\" Copyright (c) 1980, 1990, 1993
 .\"	The Regents of the University of California.  All rights reserved.
 .\"
@@ -28,7 +28,7 @@
 .\"
 .\"	@(#)grep.1	8.3 (Berkeley) 4/18/94
 .\"
-.Dd $Mdocdate: May 31 2007 $
+.Dd $Mdocdate: October 7 2019 $
 .Dt GREP 1
 .Os
 .Sh NAME
@@ -38,14 +38,16 @@
 .Sh SYNOPSIS
 .Nm grep
 .Bk -words
-.Op Fl abcEFGHhIiLlnoPqRSsUVvwxZ
+.Op Fl abcEFGHhIiLlnoqRsUVvwxZ
 .Op Fl A Ar num
 .Op Fl B Ar num
 .Op Fl C Ns Op Ar num
 .Op Fl e Ar pattern
 .Op Fl f Ar file
+.Op Fl m Ar num
 .Op Fl -binary-files Ns = Ns Ar value
 .Op Fl -context Ns Op = Ns Ar num
+.Op Fl -label Ns = Ns Ar name
 .Op Fl -line-buffered
 .Op Ar pattern
 .Op Ar
@@ -61,6 +63,7 @@ without its trailing newline.
 An empty expression matches every line.
 Each input line that matches at least one of the patterns is written
 to the standard output.
+If no file arguments are specified, the standard input is used.
 .Pp
 .Nm grep
 is used for simple patterns and
@@ -128,9 +131,11 @@ and
 .Fl C
 options.
 .It Fl b
-The offset in bytes of a matched pattern is
-displayed in front of the respective matched line.
-.It Fl C Ns Op Ar num
+Each output line is preceded by its position (in bytes) in the file.
+If option
+.Fl o
+is also specified, the position of the matched pattern is displayed.
+.It Fl C Ns Oo Ar num Oc , Fl -context Ns Op = Ns Ar num
 Print
 .Ar num
 lines of leading and trailing context surrounding each match.
@@ -184,11 +189,9 @@ as a basic regular expression
 to behave as traditional
 .Nm grep ) .
 .It Fl H
-If
-.Fl R
-is specified, follow symbolic links only if they were explicitly listed
-on the command line.
-The default is not to follow symbolic links.
+Always print filename headers
+.Pq i.e. filenames
+with output lines.
 .It Fl h
 Never print filename headers
 .Pq i.e. filenames
@@ -217,6 +220,10 @@ Pathnames are listed once per file searched.
 If the standard input is searched, the string
 .Dq (standard input)
 is written.
+.It Fl m Ar num
+Stop after
+.Ar num
+matches.
 .It Fl n
 Each output line is preceded by its relative line number in the file,
 starting at line 1.
@@ -230,12 +237,7 @@ or
 is
 specified.
 .It Fl o
-Always print filename headers with output lines.
-.It Fl P
-If
-.Fl R
-is specified, no symbolic links are followed.
-This is the default.
+Print each match, but only the match, not the entire line.
 .It Fl q
 Quiet mode:
 suppress normal output.
@@ -244,11 +246,6 @@ will only search a file until a match has been found,
 making searches potentially less expensive.
 .It Fl R
 Recursively search subdirectories listed.
-.It Fl S
-If
-.Fl R
-is specified, all symbolic links are followed.
-The default is not to follow symbolic links.
 .It Fl s
 Silent mode.
 Nonexistent and unreadable files are ignored
@@ -277,7 +274,7 @@ Force
 .Nm grep
 to behave as
 .Nm zgrep .
-.It Fl Fl binary-files Ns = Ns Ar value
+.It Fl -binary-files Ns = Ns Ar value
 Controls searching and printing of binary files.
 Options are
 .Ar binary ,
@@ -287,31 +284,26 @@ do not search binary files;
 and
 .Ar text :
 treat all files as text.
-.Sm off
-.It Fl Fl context Op = Ar num
-.Sm on
+.It Fl -label Ns = Ns Ar name
 Print
-.Ar num
-lines of leading and trailing context.
-The default is 2.
-.It Fl Fl line-buffered
+.Ar name
+instead of the filename before lines.
+.It Fl -line-buffered
 Force output to be line buffered.
 By default, output is line buffered when standard output is a terminal
 and block buffered otherwise.
-.Pp
 .El
-If no file arguments are specified, the standard input is used.
-.Sh RETURN VALUES
+.Sh EXIT STATUS
 The
 .Nm grep
 utility exits with one of the following values:
 .Pp
-.Bl -tag -width flag -compact
+.Bl -tag -width Ds -offset indent -compact
 .It Li 0
 One or more lines were selected.
 .It Li 1
 No lines were selected.
-.It Li \*(Gt1
+.It Li >1
 An error occurred.
 .El
 .Sh EXAMPLES
@@ -367,7 +359,7 @@ utility is compliant with the
 specification.
 .Pp
 The flags
-.Op Fl AaBbCGHhILoPRSUVwZ
+.Op Fl AaBbCGHhILmoRUVwZ
 are extensions to that specification, and the behaviour of the
 .Fl f
 flag when used with an empty pattern file is left undefined.
@@ -385,4 +377,4 @@ however, their use is strongly discouraged.
 The
 .Nm grep
 command first appeared in
-.At v6 .
+.At v4 .

@@ -1,4 +1,4 @@
-/*	$OpenBSD: util.c,v 1.35 2007/09/02 15:19:32 deraadt Exp $	*/
+/*	$OpenBSD: util.c,v 1.61 2019/10/07 17:47:32 tedu Exp $	*/
 
 /*-
  * Copyright (c) 1999 James Howard and Dag-Erling Coïdan Smørgrav
@@ -34,10 +34,12 @@
 #include <errno.h>
 #include <fts.h>
 #include <regex.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <zlib.h>
 
 #include "grep.h"
 
@@ -47,9 +49,11 @@
 
 static int	linesqueued;
 static int	procline(str_t *l, int);
-static int	grep_search(fastgrep_t *, unsigned char *, size_t, regmatch_t *pmatch);
-static int	grep_cmp(const unsigned char *, const unsigned char *, size_t);
+static int	grep_search(fastgrep_t *, char *, size_t, regmatch_t *pmatch, int);
+#ifndef SMALL
+static bool	grep_cmp(const char *, const char *, size_t);
 static void	grep_revstr(unsigned char *, int);
+#endif
 
 int
 grep_tree(char **argv)
@@ -58,25 +62,20 @@ grep_tree(char **argv)
 	FTSENT	*p;
 	int	c, fts_flags;
 
-	c = fts_flags = 0;
+	c = 0;
 
-	if (Hflag)
-		fts_flags = FTS_COMFOLLOW;
-	if (Pflag)
-		fts_flags = FTS_PHYSICAL;
-	if (Sflag)
-		fts_flags = FTS_LOGICAL;
-
-	fts_flags |= FTS_NOSTAT | FTS_NOCHDIR;
+	fts_flags = FTS_PHYSICAL | FTS_NOSTAT | FTS_NOCHDIR;
 
 	if (!(fts = fts_open(argv, fts_flags, NULL)))
 		err(2, NULL);
 	while ((p = fts_read(fts)) != NULL) {
 		switch (p->fts_info) {
 		case FTS_DNR:
-			/* FALL THROUGH */
+			break;
 		case FTS_ERR:
-			errx(2, "%s: %s", p->fts_path, strerror(p->fts_errno));
+			file_err = 1;
+			if(!sflag)
+				warnc(p->fts_errno, "%s", p->fts_path);
 			break;
 		case FTS_D:
 		case FTS_DP:
@@ -88,7 +87,7 @@ grep_tree(char **argv)
 	}
 	if (errno)
 		err(2, "fts_read");
-
+	fts_close(fts);
 	return c;
 }
 
@@ -99,13 +98,18 @@ procfile(char *fn)
 	file_t *f;
 	int c, t, z, nottext;
 
+	mcount = mlimit;
+
 	if (fn == NULL) {
 		fn = "(standard input)";
-		f = grep_fdopen(STDIN_FILENO, "r");
+		f = grep_fdopen(STDIN_FILENO);
 	} else {
-		f = grep_open(fn, "r");
+		f = grep_open(fn);
 	}
 	if (f == NULL) {
+		if (errno == EISDIR)
+			return 0;
+		file_err = 1;
 		if (!sflag)
 			warn("%s", fn);
 		return 0;
@@ -118,6 +122,8 @@ procfile(char *fn)
 	}
 
 	ln.file = fn;
+	if (labelname)
+		ln.file = (char *)labelname;
 	ln.line_no = 0;
 	ln.len = 0;
 	linesqueued = 0;
@@ -127,6 +133,8 @@ procfile(char *fn)
 	if (Bflag > 0)
 		initqueue();
 	for (c = 0;  c == 0 || !(lflag || qflag); ) {
+		if (mflag && mlimit == 0)
+			break;
 		ln.off += ln.len + 1;
 		if ((ln.dat = grep_fgetln(f, &ln.len)) == NULL)
 			break;
@@ -141,6 +149,8 @@ procfile(char *fn)
 			linesqueued++;
 		}
 		c += t;
+		if (mflag && mcount <= 0)
+			break;
 	}
 	if (Bflag > 0)
 		clearqueue();
@@ -167,41 +177,68 @@ procfile(char *fn)
  * Process an individual line in a file. Return non-zero if it matches.
  */
 
-#define isword(x) (isalnum(x) || (x) == '_')
+#define isword(x) (isalnum((unsigned char)x) || (x) == '_')
 
 static int
 procline(str_t *l, int nottext)
 {
-	regmatch_t	pmatch;
+	regmatch_t	pmatch = { 0 };
 	int		c, i, r;
+	regoff_t	offset;
 
+	/* size_t will be converted to regoff_t. ssize_t is guaranteed to fit
+	 * into regoff_t */
+	if (l->len > SSIZE_MAX) {
+		errx(2, "Line is too big to process");
+	}
+
+	c = 0;
+	i = 0;
 	if (matchall) {
-		c = !vflag;
+		c = 1;
 		goto print;
 	}
 
-	for (c = i = 0; i < patterns; i++) {
+	for (i = 0; i < patterns; i++) {
+		offset = 0;
+redo:
 		if (fg_pattern[i].pattern) {
-			r = grep_search(&fg_pattern[i], (unsigned char *)l->dat,
-			    l->len, &pmatch);
+			int flags = 0;
+			if (offset)
+				flags |= REG_NOTBOL;
+			r = grep_search(&fg_pattern[i], l->dat + offset,
+			    l->len - offset, &pmatch, flags);
+			pmatch.rm_so += offset;
+			pmatch.rm_eo += offset;
 		} else {
-			pmatch.rm_so = 0;
+			int flags = eflags;
+			if (offset)
+				flags |= REG_NOTBOL;
+			pmatch.rm_so = offset;
 			pmatch.rm_eo = l->len;
-			r = regexec(&r_pattern[i], l->dat, 1, &pmatch, eflags);
+			r = regexec(&r_pattern[i], l->dat, 1, &pmatch, flags);
 		}
 		if (r == 0 && xflag) {
 			if (pmatch.rm_so != 0 || pmatch.rm_eo != l->len)
 				r = REG_NOMATCH;
 		}
 		if (r == 0) {
-			c++;
+			c = 1;
+			if (oflag && pmatch.rm_so != pmatch.rm_eo)
+				goto print;
 			break;
 		}
 	}
+	if (oflag)
+		return c;
+print:
 	if (vflag)
 		c = !c;
 
-print:
+	/* Count the matches if we have a match limit */
+	if (mflag)
+		mcount -= c;
+
 	if (c && binbehave == BIN_FILE_BIN && nottext)
 		return c; /* Binary file */
 
@@ -215,17 +252,22 @@ print:
 			if (Bflag > 0)
 				printqueue();
 			linesqueued = 0;
-			printline(l, ':');
+			printline(l, ':', oflag ? &pmatch : NULL);
 		} else {
-			printline(l, '-');
+			printline(l, '-', oflag ? &pmatch : NULL);
 			tail--;
 		}
+	}
+	if (oflag && !matchall) {
+		offset = pmatch.rm_eo;
+		goto redo;
 	}
 	return c;
 }
 
+#ifndef SMALL
 void
-fgrepcomp(fastgrep_t *fg, const char *pattern)
+fgrepcomp(fastgrep_t *fg, const unsigned char *pattern)
 {
 	int i;
 
@@ -262,6 +304,7 @@ fgrepcomp(fastgrep_t *fg, const char *pattern)
 			fg->qsBc[tolower(fg->pattern[i])] = fg->patternLen - i;
 	}
 }
+#endif
 
 /*
  * Returns: -1 on failure, 0 on success
@@ -269,6 +312,9 @@ fgrepcomp(fastgrep_t *fg, const char *pattern)
 int
 fastcomp(fastgrep_t *fg, const char *pattern)
 {
+#ifdef SMALL
+	return -1;
+#else
 	int i;
 	int bol = 0;
 	int eol = 0;
@@ -286,7 +332,7 @@ fastcomp(fastgrep_t *fg, const char *pattern)
 	fg->reversedSearch = 0;
 
 	/* Remove end-of-line character ('$'). */
-	if (pattern[fg->patternLen - 1] == '$') {
+	if (fg->patternLen > 0 && pattern[fg->patternLen - 1] == '$') {
 		eol++;
 		fg->eol = 1;
 		fg->patternLen--;
@@ -324,15 +370,8 @@ fastcomp(fastgrep_t *fg, const char *pattern)
 	/* Look for ways to cheat...er...avoid the full regex engine. */
 	for (i = 0; i < fg->patternLen; i++)
 	{
-		/* Can still cheat? */
-		if ((isalnum(fg->pattern[i])) || isspace(fg->pattern[i]) ||
-		    (fg->pattern[i] == '_') || (fg->pattern[i] == ',') ||
-		    (fg->pattern[i] == '=') || (fg->pattern[i] == '-') ||
-		    (fg->pattern[i] == ':') || (fg->pattern[i] == '/')) {
-			/* As long as it is good, upper case it for later. */
-			if (iflag)
-				fg->pattern[i] = toupper(fg->pattern[i]);
-		} else if (fg->pattern[i] == '.') {
+		switch (fg->pattern[i]) {
+		case '.':
 			hasDot = i;
 			if (i < fg->patternLen / 2) {
 				if (firstHalfDot < 0)
@@ -344,11 +383,28 @@ fastcomp(fastgrep_t *fg, const char *pattern)
 				if (firstLastHalfDot < 0)
 					firstLastHalfDot = i;
 			}
-		} else {
+			break;
+		case '(': case ')':
+		case '{': case '}':
+			/* Special in BRE if preceded by '\\' */
+		case '?':
+		case '+':
+		case '|':
+			/* Not special in BRE. */
+			if (!Eflag)
+				goto nonspecial;
+		case '\\':
+		case '*':
+		case '[': case ']':
 			/* Free memory and let others know this is empty. */
 			free(fg->pattern);
 			fg->pattern = NULL;
 			return (-1);
+		default:
+nonspecial:
+			if (iflag)
+				fg->pattern[i] = toupper(fg->pattern[i]);
+			break;
 		}
 	}
 
@@ -356,7 +412,7 @@ fastcomp(fastgrep_t *fg, const char *pattern)
 	 * Determine if a reverse search would be faster based on the placement
 	 * of the dots.
 	 */
-	if ((!(lflag || cflag)) && ((!(bol || eol)) &&
+	if ((!(lflag || cflag || oflag)) && ((!(bol || eol)) &&
 	    ((lastHalfDot) && ((firstHalfDot < 0) ||
 	    ((fg->patternLen - (lastHalfDot + 1)) < firstHalfDot))))) {
 		fg->reversedSearch = 1;
@@ -409,6 +465,7 @@ fastcomp(fastgrep_t *fg, const char *pattern)
 		grep_revstr(fg->pattern, fg->patternLen);
 
 	return (0);
+#endif
 }
 
 /*
@@ -423,9 +480,13 @@ fastcomp(fastgrep_t *fg, const char *pattern)
 	  e > s && isword(d[s]) && isword(d[e-1]))
 
 static int
-grep_search(fastgrep_t *fg, unsigned char *data, size_t dataLen, regmatch_t *pmatch)
+grep_search(fastgrep_t *fg, char *data, size_t dataLen, regmatch_t *pmatch,
+    int flags)
 {
-	int j;
+#ifdef SMALL
+	return 0;
+#else
+	regoff_t j;
 	int rtrnVal = REG_NOMATCH;
 
 	pmatch->rm_so = -1;
@@ -437,6 +498,8 @@ grep_search(fastgrep_t *fg, unsigned char *data, size_t dataLen, regmatch_t *pma
 
 	/* Only try once at the beginning or ending of the line. */
 	if (fg->bol || fg->eol) {
+		if (fg->bol && (flags & REG_NOTBOL))
+			return 0;
 		/* Simple text comparison. */
 		/* Verify data is >= pattern length before searching on it. */
 		if (dataLen >= fg->patternLen) {
@@ -447,7 +510,7 @@ grep_search(fastgrep_t *fg, unsigned char *data, size_t dataLen, regmatch_t *pma
 				j = 0;
 			if (!((fg->bol && fg->eol) && (dataLen != fg->patternLen)))
 				if (grep_cmp(fg->pattern, data + j,
-				    fg->patternLen) == -1) {
+				    fg->patternLen)) {
 					pmatch->rm_so = j;
 					pmatch->rm_eo = j + fg->patternLen;
 					if (!fg->wmatch || wmatch(data, dataLen,
@@ -460,7 +523,7 @@ grep_search(fastgrep_t *fg, unsigned char *data, size_t dataLen, regmatch_t *pma
 		j = dataLen;
 		do {
 			if (grep_cmp(fg->pattern, data + j - fg->patternLen,
-			    fg->patternLen) == -1) {
+			    fg->patternLen)) {
 				pmatch->rm_so = j - fg->patternLen;
 				pmatch->rm_eo = j;
 				if (!fg->wmatch || wmatch(data, dataLen,
@@ -472,13 +535,13 @@ grep_search(fastgrep_t *fg, unsigned char *data, size_t dataLen, regmatch_t *pma
 			/* Shift if within bounds, otherwise, we are done. */
 			if (j == fg->patternLen)
 				break;
-			j -= fg->qsBc[data[j - fg->patternLen - 1]];
+			j -= fg->qsBc[(unsigned char)data[j - fg->patternLen - 1]];
 		} while (j >= fg->patternLen);
 	} else {
 		/* Quick Search algorithm. */
 		j = 0;
 		do {
-			if (grep_cmp(fg->pattern, data + j, fg->patternLen) == -1) {
+			if (grep_cmp(fg->pattern, data + j, fg->patternLen)) {
 				pmatch->rm_so = j;
 				pmatch->rm_eo = j + fg->patternLen;
 				if (fg->patternLen == 0 || !fg->wmatch ||
@@ -493,11 +556,12 @@ grep_search(fastgrep_t *fg, unsigned char *data, size_t dataLen, regmatch_t *pma
 			if (j + fg->patternLen == dataLen)
 				break;
 			else
-				j += fg->qsBc[data[j + fg->patternLen]];
+				j += fg->qsBc[(unsigned char)data[j + fg->patternLen]];
 		} while (j <= (dataLen - fg->patternLen));
 	}
 
 	return (rtrnVal);
+#endif
 }
 
 
@@ -529,23 +593,31 @@ grep_realloc(void *ptr, size_t size)
 	return ptr;
 }
 
-/*
- * Returns:	i >= 0 on failure (position that it failed)
- *		-1 on success
- */
-static int
-grep_cmp(const unsigned char *pattern, const unsigned char *data, size_t len)
+void *
+grep_reallocarray(void *ptr, size_t nmemb, size_t size)
 {
-	int i;
+	if ((ptr = reallocarray(ptr, nmemb, size)) == NULL)
+		err(2, "reallocarray");
+	return ptr;
+}
+
+#ifndef SMALL
+/*
+ * Returns:	true on success, false on failure
+ */
+static bool
+grep_cmp(const char *pattern, const char *data, size_t len)
+{
+	size_t i;
 
 	for (i = 0; i < len; i++) {
 		if (((pattern[i] == data[i]) || (!Fflag && pattern[i] == '.'))
-		    || (iflag && pattern[i] == toupper(data[i])))
+		    || (iflag && pattern[i] == toupper((unsigned char)data[i])))
 			continue;
-		return (i);
+		return false;
 	}
 
-	return (-1);
+	return true;
 }
 
 static void
@@ -560,9 +632,10 @@ grep_revstr(unsigned char *str, int len)
 		str[len - i - 1] = c;
 	}
 }
+#endif
 
 void
-printline(str_t *line, int sep)
+printline(str_t *line, int sep, regmatch_t *pmatch)
 {
 	int n;
 
@@ -574,21 +647,22 @@ printline(str_t *line, int sep)
 	if (nflag) {
 		if (n)
 			putchar(sep);
-		printf("%d", line->line_no);
+		printf("%lld", line->line_no);
 		++n;
 	}
 	if (bflag) {
 		if (n)
 			putchar(sep);
-#ifndef __minix
-		printf("%lld", (long long)line->off);
-#else
-		printf("%ld", (long)line->off);
-#endif
+		printf("%lld", (long long)line->off +
+		    (pmatch ? pmatch->rm_so : 0));
 		++n;
 	}
 	if (n)
 		putchar(sep);
-	fwrite(line->dat, line->len, 1, stdout);
+	if (pmatch)
+		fwrite(line->dat + pmatch->rm_so,
+		    pmatch->rm_eo - pmatch->rm_so, 1, stdout);
+	else
+		fwrite(line->dat, line->len, 1, stdout);
 	putchar('\n');
 }
