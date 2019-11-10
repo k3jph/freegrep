@@ -1,7 +1,10 @@
-/*	$OpenBSD: util.c,v 1.35 2007/09/02 15:19:32 deraadt Exp $	*/
+/*	$NetBSD: util.c,v 1.18 2014/07/14 21:56:03 christos Exp $	*/
+/*	$FreeBSD: head/usr.bin/grep/util.c 211496 2010-08-19 09:28:59Z des $	*/
+/*	$OpenBSD: util.c,v 1.39 2010/07/02 22:18:03 tedu Exp $	*/
 
 /*-
- * Copyright (c) 1999 James Howard and Dag-Erling Coïdan Smørgrav
+ * Copyright (c) 1999 James Howard and Dag-Erling CoÃ¯dan SmÃ¸rgrav
+ * Copyright (C) 2008-2010 Gabor Kovesdan <gabor@FreeBSD.org>
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -26,121 +29,228 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/types.h>
+#if HAVE_NBTOOL_CONFIG_H
+#include "nbtool_config.h"
+#endif
+
+#include <sys/cdefs.h>
+__RCSID("$NetBSD: util.c,v 1.18 2014/07/14 21:56:03 christos Exp $");
+
 #include <sys/stat.h>
+#include <sys/types.h>
 
 #include <ctype.h>
 #include <err.h>
 #include <errno.h>
+#include <fnmatch.h>
 #include <fts.h>
-#include <regex.h>
+#include <libgen.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <wchar.h>
+#include <wctype.h>
 
 #include "grep.h"
 
+static bool	 first, first_global = true;
+static unsigned long long since_printed;
+
+static int	 procline(struct str *l, int);
+
+bool
+file_matching(const char *fname)
+{
+	char *fname_base, *fname_copy;
+	unsigned int i;
+	bool ret;
+
+	ret = finclude ? false : true;
+	fname_copy = grep_strdup(fname);
+	fname_base = basename(fname_copy);
+
+	for (i = 0; i < fpatterns; ++i) {
+		if (fnmatch(fpattern[i].pat, fname, 0) == 0 ||
+		    fnmatch(fpattern[i].pat, fname_base, 0) == 0) {
+			if (fpattern[i].mode == EXCL_PAT) {
+				free(fname_copy);
+				return (false);
+			} else
+				ret = true;
+		}
+	}
+	free(fname_copy);
+	return (ret);
+}
+
+static inline bool
+dir_matching(const char *dname)
+{
+	unsigned int i;
+	bool ret;
+
+	ret = dinclude ? false : true;
+
+	for (i = 0; i < dpatterns; ++i) {
+		if (dname != NULL &&
+		    fnmatch(dname, dpattern[i].pat, 0) == 0) {
+			if (dpattern[i].mode == EXCL_PAT)
+				return (false);
+			else
+				ret = true;
+		}
+	}
+	return (ret);
+}
+
 /*
- * Process a file line by line...
+ * Processes a directory when a recursive search is performed with
+ * the -R option.  Each appropriate file is passed to procfile().
  */
-
-static int	linesqueued;
-static int	procline(str_t *l, int);
-static int	grep_search(fastgrep_t *, unsigned char *, size_t, regmatch_t *pmatch);
-static int	grep_cmp(const unsigned char *, const unsigned char *, size_t);
-static void	grep_revstr(unsigned char *, int);
-
 int
 grep_tree(char **argv)
 {
-	FTS	*fts;
-	FTSENT	*p;
-	int	c, fts_flags;
+	FTS *fts;
+	FTSENT *p;
+	char *d, *dir = NULL;
+	int c, fts_flags;
+	bool ok;
 
 	c = fts_flags = 0;
 
-	if (Hflag)
+	switch(linkbehave) {
+	case LINK_EXPLICIT:
 		fts_flags = FTS_COMFOLLOW;
-	if (Pflag)
+		break;
+	case LINK_SKIP:
 		fts_flags = FTS_PHYSICAL;
-	if (Sflag)
+		break;
+	default:
 		fts_flags = FTS_LOGICAL;
+			
+	}
 
 	fts_flags |= FTS_NOSTAT | FTS_NOCHDIR;
 
 	if (!(fts = fts_open(argv, fts_flags, NULL)))
-		err(2, NULL);
+		err(2, "fts_open");
 	while ((p = fts_read(fts)) != NULL) {
 		switch (p->fts_info) {
 		case FTS_DNR:
-			/* FALL THROUGH */
+			/* FALLTHROUGH */
 		case FTS_ERR:
 			errx(2, "%s: %s", p->fts_path, strerror(p->fts_errno));
 			break;
 		case FTS_D:
+			/* FALLTHROUGH */
 		case FTS_DP:
 			break;
+		case FTS_DC:
+			/* Print a warning for recursive directory loop */
+			warnx("warning: %s: recursive directory loop",
+				p->fts_path);
+			break;
 		default:
-			c += procfile(p->fts_path);
+			/* Check for file exclusion/inclusion */
+			ok = true;
+			if (dexclude || dinclude) {
+				if ((d = strrchr(p->fts_path, '/')) != NULL) {
+					dir = grep_malloc(sizeof(char) *
+					    (d - p->fts_path + 1));
+					memcpy(dir, p->fts_path,
+					    d - p->fts_path);
+					dir[d - p->fts_path] = '\0';
+				}
+				ok = dir_matching(dir);
+				free(dir);
+				dir = NULL;
+			}
+			if (fexclude || finclude)
+				ok &= file_matching(p->fts_path);
+
+			if (ok)
+				c += procfile(p->fts_path);
 			break;
 		}
 	}
-	if (errno)
-		err(2, "fts_read");
 
-	return c;
+	fts_close(fts);
+	return (c);
 }
 
+/*
+ * Opens a file and processes it.  Each file is processed line-by-line
+ * passing the lines to procline().
+ */
 int
-procfile(char *fn)
+procfile(const char *fn)
 {
-	str_t ln;
-	file_t *f;
-	int c, t, z, nottext;
+	struct file *f;
+	struct stat sb;
+	struct str ln;
+	mode_t s;
+	int c, t;
 
-	if (fn == NULL) {
-		fn = "(standard input)";
-		f = grep_fdopen(STDIN_FILENO, "r");
+	if (mflag && (mcount <= 0))
+		return (0);
+
+	if (strcmp(fn, "-") == 0) {
+		fn = label != NULL ? label : getstr(1);
+		f = grep_open(NULL);
 	} else {
-		f = grep_open(fn, "r");
+		if (!stat(fn, &sb)) {
+			/* Check if we need to process the file */
+			s = sb.st_mode & S_IFMT;
+			if (s == S_IFDIR && dirbehave == DIR_SKIP)
+				return (0);
+			if ((s == S_IFIFO || s == S_IFCHR || s == S_IFBLK
+				|| s == S_IFSOCK) && devbehave == DEV_SKIP)
+					return (0);
+		}
+		f = grep_open(fn);
 	}
 	if (f == NULL) {
 		if (!sflag)
 			warn("%s", fn);
-		return 0;
+		if (errno == ENOENT)
+			notfound = true;
+		return (0);
 	}
 
-	nottext = grep_bin_file(f);
-	if (nottext && binbehave == BIN_FILE_SKIP) {
-		grep_close(f);
-		return 0;
-	}
-
-	ln.file = fn;
+	ln.file = grep_malloc(strlen(fn) + 1);
+	strcpy(ln.file, fn);
 	ln.line_no = 0;
 	ln.len = 0;
-	linesqueued = 0;
 	tail = 0;
 	ln.off = -1;
 
-	if (Bflag > 0)
-		initqueue();
-	for (c = 0;  c == 0 || !(lflag || qflag); ) {
+	for (first = true, c = 0;  c == 0 || !(lflag || qflag); ) {
 		ln.off += ln.len + 1;
-		if ((ln.dat = grep_fgetln(f, &ln.len)) == NULL)
+		if ((ln.dat = grep_fgetln(f, &ln.len)) == NULL || ln.len == 0)
 			break;
-		if (ln.len > 0 && ln.dat[ln.len - 1] == '\n')
+		if (ln.len > 0 && ln.dat[ln.len - 1] == line_sep)
 			--ln.len;
 		ln.line_no++;
 
-		z = tail;
-
-		if ((t = procline(&ln, nottext)) == 0 && Bflag > 0 && z == 0) {
-			enqueue(&ln);
-			linesqueued++;
+		/* Return if we need to skip a binary file */
+		if (f->binary && binbehave == BINFILE_SKIP) {
+			grep_close(f);
+			free(ln.file);
+			free(f);
+			return (0);
 		}
+		/* Process the file line-by-line */
+		t = procline(&ln, f->binary);
 		c += t;
+
+		/* Count the matches if we have a match limit */
+		if (mflag) {
+			mcount -= t;
+			if (mcount <= 0)
+				break;
+		}
 	}
 	if (Bflag > 0)
 		clearqueue();
@@ -149,446 +259,241 @@ procfile(char *fn)
 	if (cflag) {
 		if (!hflag)
 			printf("%s:", ln.file);
-		printf("%u\n", c);
+		printf("%u%c", c, line_sep);
 	}
-	if (lflag && c != 0)
-		printf("%s\n", fn);
-	if (Lflag && c == 0)
-		printf("%s\n", fn);
+	if (lflag && !qflag && c != 0)
+		printf("%s%c", fn, line_sep);
+	if (Lflag && !qflag && c == 0)
+		printf("%s%c", fn, line_sep);
 	if (c && !cflag && !lflag && !Lflag &&
-	    binbehave == BIN_FILE_BIN && nottext && !qflag)
-		printf("Binary file %s matches\n", fn);
+	    binbehave == BINFILE_BIN && f->binary && !qflag)
+		printf(getstr(8), fn);
 
-	return c;
+	free(ln.file);
+	free(f);
+	return (c);
 }
 
+#define iswword(x)	(iswalnum((x)) || (x) == L'_')
 
 /*
- * Process an individual line in a file. Return non-zero if it matches.
+ * Processes a line comparing it with the specified patterns.  Each pattern
+ * is looped to be compared along with the full string, saving each and every
+ * match, which is necessary to colorize the output and to count the
+ * matches.  The matching lines are passed to printline() to display the
+ * appropriate output.
  */
-
-#define isword(x) (isalnum(x) || (x) == '_')
-
 static int
-procline(str_t *l, int nottext)
+procline(struct str *l, int nottext)
 {
-	regmatch_t	pmatch;
-	int		c, i, r;
+	regmatch_t matches[MAX_LINE_MATCHES];
+	regmatch_t pmatch;
+	size_t st = 0;
+	unsigned int i;
+	int c = 0, m = 0, r = 0;
 
-	if (matchall) {
-		c = !vflag;
-		goto print;
-	}
+	/* Loop to process the whole line */
+	while (st <= l->len) {
+		pmatch.rm_so = st;
+		pmatch.rm_eo = l->len;
 
-	for (c = i = 0; i < patterns; i++) {
-		if (fg_pattern[i].pattern) {
-			r = grep_search(&fg_pattern[i], (unsigned char *)l->dat,
-			    l->len, &pmatch);
-		} else {
-			pmatch.rm_so = 0;
-			pmatch.rm_eo = l->len;
-			r = regexec(&r_pattern[i], l->dat, 1, &pmatch, eflags);
+		/* Loop to compare with all the patterns */
+		for (i = 0; i < patterns; i++) {
+/*
+ * XXX: grep_search() is a workaround for speed up and should be
+ * removed in the future.  See fastgrep.c.
+ */
+			if (fg_pattern[i].pattern) {
+				r = grep_search(&fg_pattern[i],
+				    (unsigned char *)l->dat,
+				    l->len, &pmatch);
+				r = (r == 0) ? 0 : REG_NOMATCH;
+				st = pmatch.rm_eo;
+			} else {
+				r = regexec(&r_pattern[i], l->dat, 1,
+				    &pmatch, eflags);
+				r = (r == 0) ? 0 : REG_NOMATCH;
+				st = pmatch.rm_eo;
+			}
+			if (r == REG_NOMATCH)
+				continue;
+			/* Check for full match */
+			if (xflag &&
+			    (pmatch.rm_so != 0 ||
+			     (size_t)pmatch.rm_eo != l->len))
+				continue;
+			/* Check for whole word match */
+			if (fg_pattern[i].word && pmatch.rm_so != 0) {
+				wchar_t wbegin, wend;
+
+				wbegin = wend = L' ';
+				if (pmatch.rm_so != 0 &&
+				    sscanf(&l->dat[pmatch.rm_so - 1],
+				    "%lc", &wbegin) != 1)
+					continue;
+				if ((size_t)pmatch.rm_eo != l->len &&
+				    sscanf(&l->dat[pmatch.rm_eo],
+				    "%lc", &wend) != 1)
+					continue;
+				if (iswword(wbegin) || iswword(wend))
+					continue;
+			}
+			c = 1;
+			if (m < MAX_LINE_MATCHES)
+				matches[m++] = pmatch;
+			/* matches - skip further patterns */
+			if ((color != NULL && !oflag) || qflag || lflag)
+				break;
 		}
-		if (r == 0 && xflag) {
-			if (pmatch.rm_so != 0 || pmatch.rm_eo != l->len)
-				r = REG_NOMATCH;
-		}
-		if (r == 0) {
-			c++;
+
+		if (vflag) {
+			c = !c;
 			break;
 		}
+		/* One pass if we are not recording matches */
+		if ((color != NULL && !oflag) || qflag || lflag)
+			break;
+
+		if (st == (size_t)pmatch.rm_so)
+			break; 	/* No matches */
 	}
-	if (vflag)
-		c = !c;
 
-print:
-	if (c && binbehave == BIN_FILE_BIN && nottext)
-		return c; /* Binary file */
+	if (c && binbehave == BINFILE_BIN && nottext)
+		return (c); /* Binary file */
 
-	if ((tail > 0 || c) && !cflag && !qflag) {
+	/* Dealing with the context */
+	if ((tail || c) && !cflag && !qflag && !lflag && !Lflag) {
 		if (c) {
-			if (first > 0 && tail == 0 && (Bflag < linesqueued) &&
-			    (Aflag || Bflag))
+			if ((Aflag || Bflag) && !first_global &&
+			    (first || since_printed > Bflag))
 				printf("--\n");
-			first = 1;
 			tail = Aflag;
 			if (Bflag > 0)
 				printqueue();
-			linesqueued = 0;
-			printline(l, ':');
+			printline(l, ':', matches, m);
 		} else {
-			printline(l, '-');
+			printline(l, '-', matches, m);
 			tail--;
 		}
-	}
-	return c;
-}
-
-void
-fgrepcomp(fastgrep_t *fg, const char *pattern)
-{
-	int i;
-
-	/* Initialize. */
-	fg->patternLen = strlen(pattern);
-	fg->bol = 0;
-	fg->eol = 0;
-	fg->wmatch = wflag;
-	fg->reversedSearch = 0;
-
-	/*
-	 * Make a copy and upper case it for later if in -i mode,
-	 * else just copy the pointer.
-	 */
-	if (iflag) {
-		fg->pattern = grep_malloc(fg->patternLen + 1);
-		for (i = 0; i < fg->patternLen; i++)
-			fg->pattern[i] = toupper(pattern[i]);
-		fg->pattern[fg->patternLen] = '\0';
-	} else
-		fg->pattern = (unsigned char *)pattern;	/* really const */
-
-	/* Preprocess pattern. */
-	for (i = 0; i <= UCHAR_MAX; i++)
-		fg->qsBc[i] = fg->patternLen;
-	for (i = 1; i < fg->patternLen; i++) {
-		fg->qsBc[fg->pattern[i]] = fg->patternLen - i;
-		/*
-		 * If case is ignored, make the jump apply to both upper and
-		 * lower cased characters.  As the pattern is stored in upper
-		 * case, apply the same to the lower case equivalents.
-		 */
-		if (iflag)
-			fg->qsBc[tolower(fg->pattern[i])] = fg->patternLen - i;
-	}
-}
-
-/*
- * Returns: -1 on failure, 0 on success
- */
-int
-fastcomp(fastgrep_t *fg, const char *pattern)
-{
-	int i;
-	int bol = 0;
-	int eol = 0;
-	int shiftPatternLen;
-	int hasDot = 0;
-	int firstHalfDot = -1;
-	int firstLastHalfDot = -1;
-	int lastHalfDot = 0;
-
-	/* Initialize. */
-	fg->patternLen = strlen(pattern);
-	fg->bol = 0;
-	fg->eol = 0;
-	fg->wmatch = 0;
-	fg->reversedSearch = 0;
-
-	/* Remove end-of-line character ('$'). */
-	if (pattern[fg->patternLen - 1] == '$') {
-		eol++;
-		fg->eol = 1;
-		fg->patternLen--;
-	}
-
-	/* Remove beginning-of-line character ('^'). */
-	if (pattern[0] == '^') {
-		bol++;
-		fg->bol = 1;
-		fg->patternLen--;
-	}
-
-	/* Remove enclosing [[:<:]] and [[:>:]] (word match). */
-	if (wflag) {
-		/* basic re's use \( \), extended re's ( ) */
-		int extra = Eflag ? 1 : 2;
-		fg->patternLen -= 14 + 2 * extra;
-		fg->wmatch = 7 + extra;
-	} else if (fg->patternLen >= 14 &&
-	    strncmp(pattern + fg->bol, "[[:<:]]", 7) == 0 &&
-	    strncmp(pattern + fg->bol + fg->patternLen - 7, "[[:>:]]", 7) == 0) {
-		fg->patternLen -= 14;
-		fg->wmatch = 7;
-	}
-
-	/*
-	 * Copy pattern minus '^' and '$' characters as well as word
-	 * match character classes at the beginning and ending of the
-	 * string respectively.
-	 */
-	fg->pattern = grep_malloc(fg->patternLen + 1);
-	memcpy(fg->pattern, pattern + bol + fg->wmatch, fg->patternLen);
-	fg->pattern[fg->patternLen] = '\0';
-
-	/* Look for ways to cheat...er...avoid the full regex engine. */
-	for (i = 0; i < fg->patternLen; i++)
-	{
-		/* Can still cheat? */
-		if ((isalnum(fg->pattern[i])) || isspace(fg->pattern[i]) ||
-		    (fg->pattern[i] == '_') || (fg->pattern[i] == ',') ||
-		    (fg->pattern[i] == '=') || (fg->pattern[i] == '-') ||
-		    (fg->pattern[i] == ':') || (fg->pattern[i] == '/')) {
-			/* As long as it is good, upper case it for later. */
-			if (iflag)
-				fg->pattern[i] = toupper(fg->pattern[i]);
-		} else if (fg->pattern[i] == '.') {
-			hasDot = i;
-			if (i < fg->patternLen / 2) {
-				if (firstHalfDot < 0)
-					/* Closest dot to the beginning */
-					firstHalfDot = i;
-			} else {
-				/* Closest dot to the end of the pattern. */
-				lastHalfDot = i;
-				if (firstLastHalfDot < 0)
-					firstLastHalfDot = i;
-			}
-		} else {
-			/* Free memory and let others know this is empty. */
-			free(fg->pattern);
-			fg->pattern = NULL;
-			return (-1);
-		}
-	}
-
-	/*
-	 * Determine if a reverse search would be faster based on the placement
-	 * of the dots.
-	 */
-	if ((!(lflag || cflag)) && ((!(bol || eol)) &&
-	    ((lastHalfDot) && ((firstHalfDot < 0) ||
-	    ((fg->patternLen - (lastHalfDot + 1)) < firstHalfDot))))) {
-		fg->reversedSearch = 1;
-		hasDot = fg->patternLen - (firstHalfDot < 0 ?
-		    firstLastHalfDot : firstHalfDot) - 1;
-		grep_revstr(fg->pattern, fg->patternLen);
-	}
-
-	/*
-	 * Normal Quick Search would require a shift based on the position the
-	 * next character after the comparison is within the pattern.  With
-	 * wildcards, the position of the last dot effects the maximum shift
-	 * distance.
-	 * The closer to the end the wild card is the slower the search.  A
-	 * reverse version of this algorithm would be useful for wildcards near
-	 * the end of the string.
-	 *
-	 * Examples:
-	 * Pattern	Max shift
-	 * -------	---------
-	 * this		5
-	 * .his		4
-	 * t.is		3
-	 * th.s		2
-	 * thi.		1
-	 */
-
-	/* Adjust the shift based on location of the last dot ('.'). */
-	shiftPatternLen = fg->patternLen - hasDot;
-
-	/* Preprocess pattern. */
-	for (i = 0; i <= UCHAR_MAX; i++)
-		fg->qsBc[i] = shiftPatternLen;
-	for (i = hasDot + 1; i < fg->patternLen; i++) {
-		fg->qsBc[fg->pattern[i]] = fg->patternLen - i;
-		/*
-		 * If case is ignored, make the jump apply to both upper and
-		 * lower cased characters.  As the pattern is stored in upper
-		 * case, apply the same to the lower case equivalents.
-		 */
-		if (iflag)
-			fg->qsBc[tolower(fg->pattern[i])] = fg->patternLen - i;
-	}
-
-	/*
-	 * Put pattern back to normal after pre-processing to allow for easy
-	 * comparisons later.
-	 */
-	if (fg->reversedSearch)
-		grep_revstr(fg->pattern, fg->patternLen);
-
-	return (0);
-}
-
-/*
- * Word boundaries using regular expressions are defined as the point
- * of transition from a non-word char to a word char, or vice versa.
- * This means that grep -w +a and grep -w a+ never match anything,
- * because they lack a starting or ending transition, but grep -w a+b
- * does match a line containing a+b.
- */
-#define wmatch(d, l, s, e)	\
-	((s == 0 || !isword(d[s-1])) && (e == l || !isword(d[e])) && \
-	  e > s && isword(d[s]) && isword(d[e-1]))
-
-static int
-grep_search(fastgrep_t *fg, unsigned char *data, size_t dataLen, regmatch_t *pmatch)
-{
-	int j;
-	int rtrnVal = REG_NOMATCH;
-
-	pmatch->rm_so = -1;
-	pmatch->rm_eo = -1;
-
-	/* No point in going farther if we do not have enough data. */
-	if (dataLen < fg->patternLen)
-		return (rtrnVal);
-
-	/* Only try once at the beginning or ending of the line. */
-	if (fg->bol || fg->eol) {
-		/* Simple text comparison. */
-		/* Verify data is >= pattern length before searching on it. */
-		if (dataLen >= fg->patternLen) {
-			/* Determine where in data to start search at. */
-			if (fg->eol)
-				j = dataLen - fg->patternLen;
-			else
-				j = 0;
-			if (!((fg->bol && fg->eol) && (dataLen != fg->patternLen)))
-				if (grep_cmp(fg->pattern, data + j,
-				    fg->patternLen) == -1) {
-					pmatch->rm_so = j;
-					pmatch->rm_eo = j + fg->patternLen;
-					if (!fg->wmatch || wmatch(data, dataLen,
-					    pmatch->rm_so, pmatch->rm_eo))
-						rtrnVal = 0;
-				}
-		}
-	} else if (fg->reversedSearch) {
-		/* Quick Search algorithm. */
-		j = dataLen;
-		do {
-			if (grep_cmp(fg->pattern, data + j - fg->patternLen,
-			    fg->patternLen) == -1) {
-				pmatch->rm_so = j - fg->patternLen;
-				pmatch->rm_eo = j;
-				if (!fg->wmatch || wmatch(data, dataLen,
-				    pmatch->rm_so, pmatch->rm_eo)) {
-					rtrnVal = 0;
-					break;
-				}
-			}
-			/* Shift if within bounds, otherwise, we are done. */
-			if (j == fg->patternLen)
-				break;
-			j -= fg->qsBc[data[j - fg->patternLen - 1]];
-		} while (j >= fg->patternLen);
+		first = false;
+		first_global = false;
+		since_printed = 0;
 	} else {
-		/* Quick Search algorithm. */
-		j = 0;
-		do {
-			if (grep_cmp(fg->pattern, data + j, fg->patternLen) == -1) {
-				pmatch->rm_so = j;
-				pmatch->rm_eo = j + fg->patternLen;
-				if (fg->patternLen == 0 || !fg->wmatch ||
-				    wmatch(data, dataLen, pmatch->rm_so,
-				    pmatch->rm_eo)) {
-					rtrnVal = 0;
-					break;
-				}
-			}
-
-			/* Shift if within bounds, otherwise, we are done. */
-			if (j + fg->patternLen == dataLen)
-				break;
-			else
-				j += fg->qsBc[data[j + fg->patternLen]];
-		} while (j <= (dataLen - fg->patternLen));
+		if (Bflag)
+			enqueue(l);
+		since_printed++;
 	}
-
-	return (rtrnVal);
+	return (c);
 }
 
-
+/*
+ * Safe malloc() for internal use.
+ */
 void *
 grep_malloc(size_t size)
 {
-	void	*ptr;
+	void *ptr;
 
 	if ((ptr = malloc(size)) == NULL)
 		err(2, "malloc");
-	return ptr;
-}
-
-void *
-grep_calloc(size_t nmemb, size_t size)
-{
-	void	*ptr;
-
-	if ((ptr = calloc(nmemb, size)) == NULL)
-		err(2, "calloc");
-	return ptr;
-}
-
-void *
-grep_realloc(void *ptr, size_t size)
-{
-	if ((ptr = realloc(ptr, size)) == NULL)
-		err(2, "realloc");
-	return ptr;
+	return (ptr);
 }
 
 /*
- * Returns:	i >= 0 on failure (position that it failed)
- *		-1 on success
+ * Safe calloc() for internal use.
  */
-static int
-grep_cmp(const unsigned char *pattern, const unsigned char *data, size_t len)
+void *
+grep_calloc(size_t nmemb, size_t size)
 {
-	int i;
+	void *ptr;
 
-	for (i = 0; i < len; i++) {
-		if (((pattern[i] == data[i]) || (!Fflag && pattern[i] == '.'))
-		    || (iflag && pattern[i] == toupper(data[i])))
-			continue;
-		return (i);
-	}
-
-	return (-1);
+	if ((ptr = calloc(nmemb, size)) == NULL)
+		err(2, "calloc");
+	return (ptr);
 }
 
-static void
-grep_revstr(unsigned char *str, int len)
+/*
+ * Safe realloc() for internal use.
+ */
+void *
+grep_realloc(void *ptr, size_t size)
 {
-	int i;
-	char c;
 
-	for (i = 0; i < len / 2; i++) {
-		c = str[i];
-		str[i] = str[len - i - 1];
-		str[len - i - 1] = c;
-	}
+	if ((ptr = realloc(ptr, size)) == NULL)
+		err(2, "realloc");
+	return (ptr);
 }
 
+/*
+ * Safe strdup() for internal use.
+ */
+char *
+grep_strdup(const char *str)
+{
+	char *ret;
+
+	if ((ret = strdup(str)) == NULL)
+		err(2, "strdup");
+	return (ret);
+}
+
+/*
+ * Prints a matching line according to the command line options.
+ */
 void
-printline(str_t *line, int sep)
+printline(struct str *line, int sep, regmatch_t *matches, int m)
 {
-	int n;
+	size_t a = 0;
+	int i, n = 0;
 
-	n = 0;
 	if (!hflag) {
-		fputs(line->file, stdout);
+		if (nullflag == 0)
+			fputs(line->file, stdout);
+		else {
+			printf("%s", line->file);
+			putchar(0);
+		}
 		++n;
 	}
 	if (nflag) {
-		if (n)
+		if (n > 0)
 			putchar(sep);
 		printf("%d", line->line_no);
 		++n;
 	}
 	if (bflag) {
-		if (n)
+		if (n > 0)
 			putchar(sep);
-#ifndef __minix
 		printf("%lld", (long long)line->off);
-#else
-		printf("%ld", (long)line->off);
-#endif
 		++n;
 	}
 	if (n)
 		putchar(sep);
-	fwrite(line->dat, line->len, 1, stdout);
-	putchar('\n');
+	/* --color and -o */
+	if ((oflag || color) && m > 0) {
+		for (i = 0; i < m; i++) {
+			if (!oflag)
+				fwrite(line->dat + a, matches[i].rm_so - a, 1,
+				    stdout);
+			if (color) 
+				fprintf(stdout, "\33[%sm\33[K", color);
+
+				fwrite(line->dat + matches[i].rm_so, 
+				    matches[i].rm_eo - matches[i].rm_so, 1,
+				    stdout);
+			if (color) 
+				fprintf(stdout, "\33[m\33[K");
+			a = matches[i].rm_eo;
+			if (oflag)
+				putchar('\n');
+		}
+		if (!oflag) {
+			if (line->len - a > 0)
+				fwrite(line->dat + a, line->len - a, 1, stdout);
+			putchar(line_sep);
+		}
+	} else {
+		fwrite(line->dat, line->len, 1, stdout);
+		putchar(line_sep);
+	}
 }
